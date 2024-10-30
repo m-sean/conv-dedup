@@ -1,0 +1,18 @@
+[package]
+name = "lsh-dedup"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sean Miller <smiller@converseon.com>"]
+
+[lib]
+name = "lsh_dedup"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+rand = "0.8.5"
+rustc-hash = "2.0.0"
+csv = "1.0"
+indicatif = { version = "0.17.8", features = ["rayon"] }
+rayon = "1.10.0"
+pyo3 = "0.22.5"
