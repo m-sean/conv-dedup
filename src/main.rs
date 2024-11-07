@@ -8,24 +8,26 @@ use std::collections::{HashMap, HashSet};
 const FILEPATH: &'static str = "";
 const OUTPUT: &'static str = "";
 const TEXT_COL: usize = 1;
+const HAS_HEADER: bool = true;
 
-const NUM_PERM: usize = 128;
+const NUM_PERM: usize = 64;
 const NUM_BANDS: usize = 16;
-const THRESHOLD: f64 = 0.40;
+const THRESHOLD: f64 = 0.49;
 
-fn read_csv(filepath: &str) -> Vec<String> {
+fn read_csv(filepath: &str, has_header: bool) -> Vec<String> {
     let mut reader = csv::Reader::from_path(filepath).unwrap();
-    reader
-        .records()
+    let mut records = reader.records();
+    if has_header {
+        records.next();
+    }
+    records
         .map(|rec| rec.unwrap().get(TEXT_COL).unwrap().to_string())
         .collect()
 }
 fn main() {
     // input from file
-    let records = read_csv(FILEPATH);
-
+    let records = read_csv(FILEPATH, HAS_HEADER);
     let start = std::time::Instant::now();
-    println!("Generating document hashes...");
     let lsh = MinHashLSH::new(records.clone(), NUM_PERM, NUM_BANDS);
 
     let dedup_index = DeduplicationIndex::new(lsh, Some(THRESHOLD));

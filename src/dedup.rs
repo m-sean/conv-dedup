@@ -1,5 +1,4 @@
 use crate::lsh::MinHashLSH;
-use indicatif::{ParallelProgressIterator, ProgressIterator};
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -29,14 +28,11 @@ impl DeduplicationIndex {
     #[new]
     #[pyo3(signature = (lsh, threshold=None))]
     pub fn new(lsh: MinHashLSH, threshold: Option<f64>) -> Self {
-        println!("Querying for similar documents...");
         let query_results: Vec<(usize, Vec<&usize>)> = lsh
             .minhash_index
             .par_iter()
             .map(|(&id, minhash)| (id, lsh.query(minhash, threshold)))
-            .progress_count(lsh.minhash_index.len() as u64)
             .collect();
-        println!("Clustering query results into duplicate groups...");
         Self::from_query_results(query_results)
     }
 
@@ -61,7 +57,7 @@ impl DeduplicationIndex {
 
     fn from_query_results(query_results: Vec<(usize, Vec<&usize>)>) -> Self {
         let mut document_clusters = Self::init();
-        for (query_doc_id, similar_documents) in query_results.iter().progress() {
+        for (query_doc_id, similar_documents) in query_results.iter() {
             let cluster_id = document_clusters
                 .check_cluster_id(query_doc_id)
                 .unwrap_or(document_clusters.new_id());

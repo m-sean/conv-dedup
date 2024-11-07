@@ -1,4 +1,3 @@
-use indicatif::ProgressIterator;
 use pyo3::prelude::*;
 use rand::prelude::*;
 use rayon::prelude::*;
@@ -82,7 +81,7 @@ impl MinHashLSH {
         let band_size = num_perm / num_bands;
         let mut minhash_index: HashMap<usize, MinHash> = HashMap::with_capacity(records.len());
         let mut hash_tables: Vec<HashMap<u64, Vec<usize>>> = vec![HashMap::new(); num_bands];
-        for (id, text) in records.iter().enumerate().progress() {
+        for (id, text) in records.iter().enumerate() {
             let items = text.split_whitespace().collect();
             let minhash = MinHash::new(items, &permutations);
             minhash_index.insert(id, minhash.clone());
