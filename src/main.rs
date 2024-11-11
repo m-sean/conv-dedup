@@ -1,27 +1,33 @@
 mod dedup;
 mod lsh;
 
-use dedup::DeduplicationIndex;
-use lsh::MinHashLSH;
+use dedup::DeduplicationTable;
+use lsh::{MinHashLSH, Record};
 use std::collections::{HashMap, HashSet};
 
 const FILEPATH: &'static str = "";
 const OUTPUT: &'static str = "";
 const TEXT_COL: usize = 1;
-const HAS_HEADER: bool = true;
+const ID_COL: usize = 0;
+const HAS_HEADER: bool = false;
 
 const NUM_PERM: usize = 64;
 const NUM_BANDS: usize = 16;
 const THRESHOLD: f64 = 0.49;
 
-fn read_csv(filepath: &str, has_header: bool) -> Vec<String> {
+fn read_csv(filepath: &str, has_header: bool) -> Vec<Record> {
     let mut reader = csv::Reader::from_path(filepath).unwrap();
     let mut records = reader.records();
     if has_header {
         records.next();
     }
     records
-        .map(|rec| rec.unwrap().get(TEXT_COL).unwrap().to_string())
+        .map(|rec| {
+            let str_rec = rec.unwrap();
+            let uuid = str_rec.get(ID_COL).unwrap().to_string();
+            let text = str_rec.get(TEXT_COL).unwrap().to_string();
+            Record::new(uuid, text)
+        })
         .collect()
 }
 fn main() {
@@ -30,12 +36,12 @@ fn main() {
     let start = std::time::Instant::now();
     let lsh = MinHashLSH::new(records.clone(), NUM_PERM, NUM_BANDS);
 
-    let dedup_index = DeduplicationIndex::new(lsh, Some(THRESHOLD));
+    let dedup_table = DeduplicationTable::new(lsh, Some(THRESHOLD));
     println!(
         "Dedupe completed in {:.4} secs",
         (std::time::Instant::now() - start).as_secs_f64()
     );
-    let dupe_groups = dedup_index.grouped_indices();
+    let dupe_groups = dedup_table.grouped_ids();
     let rec_ct = records.len();
     let dd_ct = dupe_groups.len();
     println!("Total:\t{}", rec_ct);
@@ -44,13 +50,16 @@ fn main() {
 
     // output to file
     let mut writer = csv::Writer::from_path(OUTPUT).unwrap();
-    let mut records: HashMap<usize, String> = records.into_iter().enumerate().collect();
+    let mut records: HashMap<String, String> = records
+        .into_iter()
+        .map(|Record { uuid, text }| (uuid, text))
+        .collect();
     let mut docs = HashSet::new();
     for (dupe_id, dupe_group) in dupe_groups.into_iter().enumerate() {
         let ct = &format!("{}", dupe_group.len());
         let dupe_id = &format!("{}", dupe_id);
         for doc_id in dupe_group {
-            let rec = &records.remove(&doc_id).unwrap();
+            let rec = &records.remove(doc_id).unwrap();
             if docs.contains(&doc_id) {
                 panic!("dupe doc: {doc_id}")
             } else {

@@ -8,17 +8,17 @@ use std::collections::{HashMap, HashSet};
 /// from querying the MinhashLSH.
 ///
 #[pyclass]
-pub struct DeduplicationIndex {
-    /// Mapping of duplicate group id to the indices of members
-    duplicate_groups: HashMap<usize, HashSet<usize>>,
-    /// Reverse lookup to identify the group id of a record index
-    doc_lookup: HashMap<usize, usize>,
+pub struct DeduplicationTable {
+    /// Mapping of duplicate group id to record ids
+    duplicate_groups: HashMap<usize, HashSet<String>>,
+    /// Reverse lookup to identify the group id of a record id
+    doc_lookup: HashMap<String, usize>,
 }
 
 #[pymethods]
-impl DeduplicationIndex {
+impl DeduplicationTable {
     ///
-    /// Constructs an DeduplicationIndex instance using an existing MinHashLSH for querying and clustering.
+    /// Constructs an DeduplicationTable instance using an existing MinHashLSH for querying and clustering.
     ///
     /// ## Arguments
     ///
@@ -28,26 +28,26 @@ impl DeduplicationIndex {
     #[new]
     #[pyo3(signature = (lsh, threshold=None))]
     pub fn new(lsh: MinHashLSH, threshold: Option<f64>) -> Self {
-        let query_results: Vec<(usize, Vec<&usize>)> = lsh
-            .minhash_index
+        let query_results: Vec<(&String, Vec<&String>)> = lsh
+            .minhash_map
             .par_iter()
-            .map(|(&id, minhash)| (id, lsh.query(minhash, threshold)))
+            .map(|(id, minhash)| (id, lsh.query(minhash, threshold)))
             .collect();
         Self::from_query_results(query_results)
     }
 
     ///
-    /// Outputs the list of clustered record indices found to be similar enough to form distinct groups.
+    /// Outputs the list of clustered record ids found to be similar enough to form distinct groups.
     ///
-    pub fn grouped_indices(&self) -> Vec<Vec<usize>> {
+    pub fn grouped_ids(&self) -> Vec<Vec<&String>> {
         self.duplicate_groups
             .values()
-            .map(|group| group.iter().map(|u| *u).collect())
+            .map(|set| set.into_iter().collect())
             .collect()
     }
 }
 
-impl DeduplicationIndex {
+impl DeduplicationTable {
     fn init() -> Self {
         Self {
             duplicate_groups: HashMap::new(),
@@ -55,14 +55,14 @@ impl DeduplicationIndex {
         }
     }
 
-    fn from_query_results(query_results: Vec<(usize, Vec<&usize>)>) -> Self {
+    fn from_query_results(query_results: Vec<(&String, Vec<&String>)>) -> Self {
         let mut document_clusters = Self::init();
-        for (query_doc_id, similar_documents) in query_results.iter() {
+        for (query_doc_id, similar_documents) in query_results {
             let cluster_id = document_clusters
                 .check_cluster_id(query_doc_id)
                 .unwrap_or(document_clusters.new_id());
             let mut current_cluster = HashSet::new();
-            for &similar_doc_id in similar_documents {
+            for similar_doc_id in similar_documents {
                 if let Some(prev_cluster_id) = document_clusters.check_cluster_id(similar_doc_id) {
                     if prev_cluster_id != cluster_id {
                         let reassignment = document_clusters.remove(prev_cluster_id);
@@ -70,30 +70,30 @@ impl DeduplicationIndex {
                     }
                 } else {
                     if !current_cluster.contains(similar_doc_id) {
-                        current_cluster.insert(*similar_doc_id);
+                        current_cluster.insert(similar_doc_id.to_string());
                     }
                 }
             }
-            document_clusters.update(cluster_id, &current_cluster);
+            document_clusters.update(cluster_id, current_cluster);
         }
         document_clusters
     }
 
-    fn update(&mut self, cluster_id: usize, doc_set: &HashSet<usize>) {
-        for &doc_id in doc_set {
+    fn update(&mut self, cluster_id: usize, doc_set: HashSet<String>) {
+        for doc_id in doc_set {
             self.add(cluster_id, doc_id);
         }
     }
 
-    fn add(&mut self, cluster_id: usize, doc_id: usize) {
+    fn add(&mut self, cluster_id: usize, doc_id: String) {
         self.duplicate_groups
             .entry(cluster_id)
             .or_insert_with(HashSet::new)
-            .insert(doc_id);
+            .insert(doc_id.clone());
         self.doc_lookup.insert(doc_id, cluster_id);
     }
 
-    fn check_cluster_id(&self, doc_id: &usize) -> Option<usize> {
+    fn check_cluster_id(&self, doc_id: &String) -> Option<usize> {
         self.doc_lookup.get(doc_id).copied()
     }
 
@@ -101,7 +101,7 @@ impl DeduplicationIndex {
         self.duplicate_groups.keys().max().map_or(0, |&v| v + 1)
     }
 
-    fn remove(&mut self, cluster_id: usize) -> HashSet<usize> {
+    fn remove(&mut self, cluster_id: usize) -> HashSet<String> {
         let set = self
             .duplicate_groups
             .remove(&cluster_id)

@@ -7,6 +7,31 @@ use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug)]
 #[pyclass]
+pub struct Record {
+    pub uuid: String,
+    pub text: String,
+}
+
+#[pymethods]
+impl Record {
+    #[new]
+    pub fn new(uuid: String, text: String) -> Self {
+        Self { uuid, text }
+    }
+
+    #[getter]
+    fn uuid(&self) -> String {
+        self.uuid.clone()
+    }
+
+    #[getter]
+    fn text(&self) -> String {
+        self.text.clone()
+    }
+}
+
+#[derive(Clone, Debug)]
+#[pyclass]
 pub struct MinHash {
     pub hash_values: Vec<u32>,
     num_perm: usize,
@@ -57,11 +82,11 @@ impl MinHash {
 /// Locality-Sensitive Hashing using MinHash for efficient similarity search.
 pub struct MinHashLSH {
     /// A table for looking up full minhashes for jaccard similarity thresholding
-    pub minhash_index: HashMap<usize, MinHash>,
+    pub minhash_map: HashMap<String, MinHash>,
     /// Number of times to split the hash singature (number of banded hash tables)
     band_size: usize,
     /// Banded hash tables used to find candidates for similarity
-    hash_tables: Vec<HashMap<u64, Vec<usize>>>,
+    hash_tables: Vec<HashMap<u64, Vec<String>>>,
 }
 
 #[pymethods]
@@ -75,55 +100,53 @@ impl MinHashLSH {
     /// * `num_bands` - Number of times to split each hash signature in the LSH algorithm
     /// (i.e., number of hash tables).
     #[new]
-    pub fn new(records: Vec<String>, num_perm: usize, num_bands: usize) -> Self {
+    pub fn new(records: Vec<Record>, num_perm: usize, num_bands: usize) -> Self {
         let mut rng = StdRng::from_entropy();
         let permutations: Vec<(u64, u64)> = (0..num_perm).map(|_| (rng.gen(), rng.gen())).collect();
         let band_size = num_perm / num_bands;
-        let mut minhash_index: HashMap<usize, MinHash> = HashMap::with_capacity(records.len());
-        let mut hash_tables: Vec<HashMap<u64, Vec<usize>>> = vec![HashMap::new(); num_bands];
-        for (id, text) in records.iter().enumerate() {
+        let mut minhash_map: HashMap<String, MinHash> = HashMap::with_capacity(records.len());
+        let mut hash_tables: Vec<HashMap<u64, Vec<String>>> = vec![HashMap::new(); num_bands];
+        for Record { uuid, text } in records {
             let items = text.split_whitespace().collect();
             let minhash = MinHash::new(items, &permutations);
-            minhash_index.insert(id, minhash.clone());
+            minhash_map.insert(uuid.clone(), minhash.clone());
             for (i, table) in hash_tables.iter_mut().enumerate() {
                 let start = i * band_size;
                 let end = start + band_size;
                 let band_hash = calculate_band_hash(&minhash.hash_values[start..end]);
-                table.entry(band_hash).or_insert_with(Vec::new).push(id);
+                table
+                    .entry(band_hash)
+                    .or_insert_with(Vec::new)
+                    .push(uuid.clone());
             }
         }
         MinHashLSH {
-            minhash_index,
+            minhash_map,
             band_size,
             hash_tables,
         }
     }
 
     #[pyo3(name="query", signature=(minhash, threshold=None))]
-    fn query_py(&self, minhash: &MinHash, threshold: Option<f64>) -> PyResult<Vec<usize>> {
-        let result = self
-            .query(minhash, threshold)
-            .into_iter()
-            .map(|&u| u)
-            .collect();
-        Ok(result)
+    fn query_py(&self, minhash: &MinHash, threshold: Option<f64>) -> Vec<&String> {
+        self.query(minhash, threshold).into_iter().collect()
     }
 
-    fn get_minhash_index(&self) -> HashMap<usize, MinHash> {
-        self.minhash_index.clone()
+    fn get_minhash_map(&self) -> HashMap<String, MinHash> {
+        self.minhash_map.clone()
     }
 }
 
 impl MinHashLSH {
-    /// Query the LSH index for (potentially) similar items.
+    /// Query the LSH for (potentially) similar items.
     ///
     /// ## Arguments
     ///
     /// * `minhash` - The MinHash instance to query for.
-    /// * `threshold` - threshold (inclusive) for jaccard similarity to apply to query result (optional) .
+    /// * `threshold` - threshold (inclusive) for jaccard similarity to apply to query result (optional).
     ///
-    pub fn query(&self, minhash: &MinHash, threshold: Option<f64>) -> Vec<&usize> {
-        let candidates: HashSet<&usize> =
+    pub fn query(&self, minhash: &MinHash, threshold: Option<f64>) -> Vec<&String> {
+        let candidates: HashSet<&String> =
             self.hash_tables
                 .iter()
                 .enumerate()
@@ -139,10 +162,10 @@ impl MinHashLSH {
         if let Some(threshold) = threshold {
             candidates
                 .into_par_iter()
-                .filter_map(|idx| {
-                    let candidate_hash = &self.minhash_index[&idx];
+                .filter_map(|id| {
+                    let candidate_hash = &self.minhash_map[id.as_str()];
                     if minhash.jaccard_similarity(candidate_hash) >= threshold {
-                        Some(idx)
+                        Some(id)
                     } else {
                         None
                     }
